@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Panel de Control Hábitat 1</title>
+  <style>
+    body { font-family: Arial; text-align: center; background-color: #f0f0f0; }
+    h1, h2, h3 { margin: 10px; }
+    .switch {
+      margin: 5px; padding: 10px 20px; font-size: 16px;
+      border: none; border-radius: 5px; cursor: pointer; color: white;
+    }
+    .on { background-color: #4CAF50; }
+    .off { background-color: #f44336; }
+    .sensor-container {
+      display: inline-block; margin: 20px; text-align: center;
+    }
+    .termometro {
+      width: 40px; height: 150px; background-color: #ddd;
+      border-radius: 20px; margin: auto; position: relative; overflow: hidden;
+    }
+    .barra {
+      position: absolute; bottom: 0; width: 100%;
+      background-color: #4CAF50; transition: height 0.3s ease;
+    }
+    input[type="range"] { width: 150px; margin-top: 10px; }
+    table { margin: auto; margin-top: 20px; font-size: 14px; }
+  </style>
+</head>
+<body>
+
+  <h1>Control Remoto Hábitat 1</h1>
+  <div style="position: absolute; top: 10px; left: 10px;">
+    <img src="/logo.jpeg" alt="logo" style="height: 150px;">
+  </div>
+
+  <div>
+    <h2>Dispositivos</h2>
+    <h3>Iluminación</h3>
+    <button class="switch" data-topic="iluminacion-1" data-state="0">Apagar</button>
+    <h3>Ventilación</h3>
+    <button class="switch" data-topic="ventilador-1" data-state="0">Apagar</button>
+    <h3>Agua</h3>
+    <button class="switch" data-topic="agua-1" data-state="0">Apagar</button>
+  </div>
+
+  <div>
+    <h2>Sensores</h2>
+    <div class="sensor-container">
+      <h3>Humedad</h3>
+      <div class="termometro"><div id="barra-humedad" class="barra"></div></div>
+      <div><span id="humedad-valor">--%</span></div>
+      <input type="range" min="0" max="100" value="0" id="slider-humedad">
+    </div>
+
+    <div class="sensor-container">
+      <h3>Temperatura</h3>
+      <div class="termometro"><div id="barra-temperatura" class="barra"></div></div>
+      <div><span id="temperatura-valor">--%</span></div>
+      <input type="range" min="0" max="100" value="0" id="slider-temperatura">
+    </div>
+  </div>
+
+  <div style="margin-top: 30px;">
+    <h3>Programar Horario</h3>
+    <form id="horario-form">
+      <label>Dispositivo:</label>
+      <select name="topic">
+        <option value="iluminacion-1">Iluminación</option>
+        <option value="ventilador-1">Ventilación</option>
+        <option value="agua-1">Agua</option>
+      </select><br><br>
+
+      <label>Encender a:</label>
+      <input type="time" name="onTime"><br><br>
+
+      <label>Apagar a:</label>
+      <input type="time" name="offTime"><br><br>
+
+      <button type="submit">Guardar</button>
+    </form>
+  </div>
+
+  <div>
+    <h4>Horarios Programados</h4>
+    <table id="tabla-horarios" border="1">
+      <thead><tr><th>Dispositivo</th><th>Encender</th><th>Apagar</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script>
+    async function sendCmd(topic, value) {
+      await fetch("/api/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic, value })
+      });
+    }
+
+    function actualizarBoton(boton, estado) {
+      boton.dataset.state = estado;
+      boton.textContent = estado === "1" ? "Encender" : "Apagar";
+      boton.classList.remove("on", "off");
+      boton.classList.add(estado === "1" ? "on" : "off");
+    }
+
+    function actualizarTermometro(idBarra, idTexto, valor) {
+      document.getElementById(idBarra).style.height = `${valor}%`;
+      document.getElementById(idTexto).textContent = `${valor}%`;
+    }
+
+    document.querySelectorAll(".switch").forEach(button => {
+      actualizarBoton(button, button.dataset.state);
+      button.addEventListener("click", () => {
+        const topic = button.dataset.topic;
+        const newState = button.dataset.state === "0" ? "1" : "0";
+        sendCmd(topic, newState);
+        actualizarBoton(button, newState);
+      });
+    });
+
+    document.getElementById("slider-humedad").addEventListener("input", async e => {
+      const valor = e.target.value;
+      actualizarTermometro("barra-humedad", "humedad-valor", valor);
+      await sendCmd("humedad", valor);
+    });
+
+    document.getElementById("slider-temperatura").addEventListener("input", async e => {
+      const valor = e.target.value;
+      actualizarTermometro("barra-temperatura", "temperatura-valor", valor);
+      await sendCmd("temperatura", valor);
+    });
+
+    async function actualizarEstadoVisual() {
+      try {
+        const res = await fetch("/api/status");
+        const estados = await res.json();
+        estados.forEach(({ topic, estado }) => {
+          if (topic === "humedad") {
+            actualizarTermometro("barra-humedad", "humedad-valor", estado);
+            document.getElementById("slider-humedad").value = estado;
+          }
+          if (topic === "temperatura") {
+            actualizarTermometro("barra-temperatura", "temperatura-valor", estado);
+            document.getElementById("slider-temperatura").value = estado;
+          }
+          const boton = document.querySelector(`.switch[data-topic="${topic}"]`);
+          if (boton) actualizarBoton(boton, estado);
+        });
+      } catch (err) {
+        console.error("Error al sincronizar estado visual:", err.message);
+      }
+    }
+
+    actualizarEstadoVisual();
+    setInterval(actualizarEstadoVisual, 60000);
+
+    document.getElementById("horario-form").addEventListener("submit", async e => {
+      e.preventDefault();
+      const form = e.target;
+      const topic = form.topic.value;
+      const onTime = form.onTime.value;
+      const offTime = form.offTime.value;
+
+      if (!topic || !onTime || !offTime) return alert("Por favor completa todos los campos");
+
+      const res = await fetch("/api/schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic, onTime, offTime })
+      });
+
+      const result = await res.json();
+      alert(result.success ? "Horario guardado" : "Error al guardar");
+
+      if (result.success) {
+        const fila = document.createElement("tr");
+        fila.innerHTML = `<td>${topic}</td><td>${onTime}</td><td>${offTime}</td>`;
+        document.querySelector("#tabla-horarios tbody").appendChild(fila);
+      }
+    });
+  </script>
+
+</body>
+</html>
